@@ -33,7 +33,7 @@ resource "aws_dynamodb_table""tf_lock"{
     hash_key = "LockID"
     attribute {
       name = "LockID"
-      type = "s"
+      type = "S"
     }
     tags = {
         Name = "terraform-lock"
