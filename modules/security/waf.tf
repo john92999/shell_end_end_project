@@ -1,14 +1,19 @@
 # WAF Web ACL — attach to ALB
-resource "aws_wafv2_web_acl""main" {
-  name  = "${var.env}-waf"
-  scope = "REGIONAL"
-  default_action { allow {} }
+resource "aws_wafv2_web_acl" "main" {
+  name        = "${var.env}-waf"
+  description = "WAF for ${var.env} ALB"
+  scope       = "REGIONAL"
+  default_action {
+    allow {}
+  }
 
-  # AWS Managed Rule — blocks common attacks (SQL injection, XSS, etc.)
+  # AWS Managed Rule — blocks common attacks
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 1
-    override_action { none {} }
+    override_action {
+      none {}
+    }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
@@ -22,11 +27,13 @@ resource "aws_wafv2_web_acl""main" {
     }
   }
 
-  # Rate limiting rule — block IP if > 1000 req/min (DDoS protection)
+  # Rate limiting rule
   rule {
     name     = "RateLimitRule"
     priority = 2
-    action   { block {} }
+    action {
+      block {}
+    }
     statement {
       rate_based_statement {
         limit              = 1000
@@ -42,34 +49,35 @@ resource "aws_wafv2_web_acl""main" {
 
   visibility_config {
     cloudwatch_metrics_enabled = true
-    metric_name                = "${var.env}-waf"
+    metric_name                = "${var.env}-waf-main" # Unique metric name
     sampled_requests_enabled   = true
   }
 }
 
 # Attach WAF to ALB
-resource "aws_wafv2_web_acl_association""alb" {
+resource "aws_wafv2_web_acl_association" "alb" {
   resource_arn = var.alb_arn
   web_acl_arn  = aws_wafv2_web_acl.main.arn
 }
 
-# KMS key for encrypting RDS, EBS, ElastiCache, MSK, S3 state
-resource "aws_kms_key""main" {
+# KMS key for encryption
+resource "aws_kms_key" "main" {
   description             = "${var.env} encryption key"
   deletion_window_in_days = 30
-  enable_key_rotation     = true   # rotate key every year automatically
+  enable_key_rotation     = true
   tags = { Name = "${var.env}-kms" }
 }
 
 # Store DocumentDB credentials in Secrets Manager
-resource "aws_secretsmanager_secret""docdb_creds" {
-  name       = "${var.env}/docdb/credentials"
+resource "aws_secretsmanager_secret" "docdb_creds" {
+  name       = "${var.env}/docdb/credentials-v2" # Added suffix to avoid naming conflicts
   kms_key_id = aws_kms_key.main.arn
 }
-resource "aws_secretsmanager_secret_version""docdb_creds" {
+
+resource "aws_secretsmanager_secret_version" "docdb_creds" {
   secret_id = aws_secretsmanager_secret.docdb_creds.id
   secret_string = jsonencode({
     username = "admin"
-    password = var.docdb_password    # pass via terraform.tfvars, never hardcode
+    password = var.docdb_password
   })
 }

@@ -64,3 +64,10 @@ resource "aws_subnet" "public_2" {
         Name = "public-subnet-2"
     }
 }
+
+
+module "vpc" {
+  source = "./modules/vpc"
+  flow_log_role_arn = aws_iam_role.vpc_flow_log_role.arn
+  flow_log_group_arn = aws_cloudwatch_log_group.vpc_flow_log_group.arn
+}
