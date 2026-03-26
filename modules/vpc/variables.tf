@@ -1,31 +1,32 @@
+# modules/vpc/variables.tf
+# All inputs this module needs from the caller (main.tf)
+
+variable "environment" {
+  type        = string
+  description = "Environment name used as prefix in resource names (dev, prod)"
+}
+
 variable "vpc_cidr" {
-    default = "10.0.0.0/16"
+  type        = string
+  description = "IP address range for the VPC. e.g. 10.0.0.0/16"
 }
 
 variable "public_cidrs" {
-    default = ["10.0.1.0/24","10.0.2.0/24"]
+  type        = list(string)
+  description = "List of CIDR blocks for public subnets. One per AZ."
 }
 
 variable "private_cidrs" {
-    default = ["10.0.3.0/24","10.0.4.0/24"]
+  type        = list(string)
+  description = "List of CIDR blocks for private subnets. One per AZ."
 }
 
 variable "data_cidrs" {
-    default = ["10.0.5.0/24","10.0.6.0/24"]
+  type        = list(string)
+  description = "List of CIDR blocks for data subnets (DB/cache/kafka). One per AZ."
 }
 
-variable "azs" {
-    default = ["ap-south-1a","ap-south-1b"]
-}
-
-variable "env" {
-    default = "dev"
-}
-
-variable "flow_log_role_arn" {
-
-}
-
-variable "flow_log_group_arn"{
-    
+variable "availability_zones" {
+  type        = list(string)
+  description = "List of AZ names. e.g. [ap-south-1a, ap-south-1b]"
 }

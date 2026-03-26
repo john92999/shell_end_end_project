@@ -1,4 +1,4 @@
-# modules/iam/variables.tf
+# modules/ecr/variables.tf
 
 variable "environment" {
   type        = string
