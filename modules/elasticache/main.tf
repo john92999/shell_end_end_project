@@ -47,7 +47,7 @@ resource "aws_elasticache_subnet_group" "main" {
 # Redis Replication Group — the actual Redis cluster with HA
 resource "aws_elasticache_replication_group" "redis" {
   replication_group_id = "${var.environment}-redis"
-  description          = "Redis cache for todo-app — reduces DB load and improves response time"
+  description          = "Redis cache for todo-app reduces DB load and improves response time"
 
   engine         = "redis"
   engine_version = "7.0" # Redis version 7.0 — latest stable

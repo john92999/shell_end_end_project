@@ -111,7 +111,7 @@ resource "aws_secretsmanager_secret_version" "redis_creds" {
 # Rules below then BLOCK specific bad patterns.
 resource "aws_wafv2_web_acl" "main" {
   name        = "${var.environment}-waf"
-  description = "WAF for todo-app ALB — blocks common attacks and rate limits"
+  description = "WAF for todo-app ALB blocks common attacks and rate limits"
   scope       = "REGIONAL"
 
   # Default: allow all traffic unless a rule below blocks it

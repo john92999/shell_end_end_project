@@ -6,3 +6,8 @@ terraform {
     encrypt = true
     }
 }
+
+resource "aws_s3_bucket" "statefilebucket" {
+  bucket = "statefilebucket-pjwesley7"
+  force_destroy = true
+}

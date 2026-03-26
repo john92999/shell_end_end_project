@@ -81,7 +81,6 @@ resource "aws_launch_template" "api" {
   block_device_mappings {
     device_name = "/dev/xvda"  # root volume
     ebs {
-      volume_size           = 20    # 20 GB root disk
       volume_type           = "gp3" # gp3 = latest generation SSD
       encrypted             = true
       kms_key_id            = var.kms_key_arn

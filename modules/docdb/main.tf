@@ -43,7 +43,7 @@
 # so if one AZ fails, the other keeps serving.
 resource "aws_docdb_subnet_group" "main" {
   name        = "${var.environment}-docdb-subnet-group"
-  description = "DocumentDB subnet group — uses data subnets for maximum isolation"
+  description = "DocumentDB subnet group uses data subnets for maximum isolation"
   subnet_ids  = var.data_subnet_ids
 
   tags = {
