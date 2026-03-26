@@ -60,3 +60,8 @@ variable "secrets_arn" {
   type        = string
   description = "ARN of Secrets Manager secret containing DB credentials."
 }
+
+variable "redis_secret_arn" {
+  type        = string
+  description = "ARN of the Secrets Manager secret holding the Redis auth token. Fetched at EC2 startup — never embedded in user_data."
+}

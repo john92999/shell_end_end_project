@@ -1,46 +1,36 @@
 # ─────────────────────────────────────────────────────────────────
 # modules/alb/main.tf
 #
-# PURPOSE: Creates the Application Load Balancer (ALB).
+# FIX APPLIED: HTTPS listener is now conditional.
 #
-# WHAT IS AN ALB?
-#   ALB = Application Load Balancer.
-#   It is the entry point for all user traffic.
-#   It receives requests from browsers and routes them to the
-#   correct backend service.
+# WHY WAS IT BROKEN?
+#   The HTTPS listener used certificate_arn = var.acm_certificate_arn
+#   When acm_certificate_arn = "" (empty string, the default),
+#   AWS rejects the listener creation with:
+#     "CertificateArn cannot be empty"
 #
-#   ROUTING RULES:
-#     /       → send to EKS (todo-ui React app)
-#     /api/*  → send to EC2 Auto Scaling Group (todo-api Java backend)
+#   For dev/testing without a real domain, we just use HTTP on port 80.
+#   For production, set acm_certificate_arn in terraform.tfvars to
+#   a real ACM certificate ARN and the HTTPS listener is created.
 #
-# ALB vs NLB:
-#   ALB (Layer 7): understands HTTP. Can read URL paths, headers,
-#                  cookies. Routes / to UI and /api to backend.
-#                  This is what we use for the todo app.
-#
-#   NLB (Layer 4): only sees TCP packets. Ultra-fast (microseconds).
-#                  Used for Kafka (TCP protocol) or gaming/streaming.
-#                  We create an internal NLB for MSK (optional).
-#
-# WHY PUBLIC SUBNETS?
-#   The ALB is the only resource that faces the internet.
-#   It must be in public subnets so browsers can reach it.
-#   Everything behind it (EC2, EKS) is in private subnets.
+# HOW THE FIX WORKS:
+#   count = var.acm_certificate_arn != "" ? 1 : 0
+#   This means: if you provided a cert ARN → create the HTTPS listener (count=1)
+#              if cert ARN is empty → skip the HTTPS listener (count=0)
 # ─────────────────────────────────────────────────────────────────
 
 # ── Application Load Balancer ──────────────────────────────────────
+# The ALB is the single entry point for all user traffic.
+# It lives in PUBLIC subnets so browsers can reach it.
+# Everything behind it (EC2, EKS pods) is in PRIVATE subnets.
 resource "aws_lb" "alb" {
   name               = "${var.environment}-todo-alb"
-  load_balancer_type = "application"
+  load_balancer_type = "application"    # ALB = Layer 7, understands HTTP paths
+  subnets            = var.public_subnet_ids
+  security_groups    = [var.alb_sg_id]
 
-  # ALB must be in PUBLIC subnets — users connect to it from internet
-  subnets = var.public_subnet_ids
-
-  # The ALB security group only allows 80/443 from internet
-  security_groups = [var.alb_sg_id]
-
-  # Security setting: drop requests with invalid HTTP headers.
-  # Prevents certain HTTP smuggling attacks.
+  # Security hardening: reject requests with malformed HTTP headers.
+  # Prevents certain HTTP smuggling attacks at the edge.
   drop_invalid_header_fields = true
 
   tags = {
@@ -48,30 +38,35 @@ resource "aws_lb" "alb" {
   }
 }
 
-# ── Target Group: todo-api (EC2) ───────────────────────────────────
-# A Target Group is a list of servers that ALB sends traffic to.
-# Think of it as: "these are the EC2 instances handling /api requests"
-#
-# Health checks: ALB calls /health every 30s on each EC2 instance.
-# If 2 consecutive checks fail → remove that instance from rotation.
-# If 2 consecutive checks pass → add it back.
-# This ensures users never get sent to a broken server.
+# ── Attach WAF to ALB ─────────────────────────────────────────────
+# WAF (Web Application Firewall) filters all traffic BEFORE it
+# reaches the ALB listeners. Blocks SQL injection, XSS, and DDoS.
+resource "aws_wafv2_web_acl_association" "alb" {
+  resource_arn = aws_lb.alb.arn
+  web_acl_arn  = var.waf_acl_arn
+}
+
+# ── Target Group: todo-api (EC2 Auto Scaling Group) ───────────────
+# A Target Group is the list of backend servers the ALB routes to.
+# The ALB health-checks each EC2 instance every 30 seconds.
+# If /actuator/health returns 200 → instance is healthy → gets traffic.
+# If it fails twice → instance is removed from rotation automatically.
 resource "aws_lb_target_group" "api" {
   name        = "${var.environment}-api-tg"
-  port        = 8080     # todo-api listens on port 8080
+  port        = 8080          # Spring Boot todo-api listens on 8080
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "instance" # targets are EC2 instances
+  target_type = "instance"    # targets are EC2 instances (not pods)
 
   health_check {
-    path                = "/actuator/health" # Spring Boot health endpoint
-    port                = "traffic-port"     # same port as target (8080)
+    path                = "/actuator/health"  # Spring Boot health endpoint
+    port                = "traffic-port"      # same port as target (8080)
     protocol            = "HTTP"
-    interval            = 30                 # check every 30 seconds
-    timeout             = 5                  # wait 5 seconds for response
-    healthy_threshold   = 2                  # 2 successes = healthy
-    unhealthy_threshold = 2                  # 2 failures = unhealthy → remove from ALB
-    matcher             = "200"              # HTTP 200 = healthy
+    interval            = 30                  # check every 30 seconds
+    timeout             = 5                   # 5 second timeout per check
+    healthy_threshold   = 2                   # 2 successes = healthy
+    unhealthy_threshold = 2                   # 2 failures = remove from ALB
+    matcher             = "200"               # HTTP 200 = healthy
   }
 
   tags = {
@@ -79,17 +74,16 @@ resource "aws_lb_target_group" "api" {
   }
 }
 
-# ── Target Group: todo-ui (EKS/Kubernetes) ────────────────────────
-# For EKS, we use target_type = "ip" because Kubernetes pods
-# get their own IPs and can move between nodes.
-# "ip" type allows the ALB Ingress Controller to register
-# pod IPs directly instead of node IPs.
+# ── Target Group: todo-ui (EKS Kubernetes pods) ───────────────────
+# For EKS pods we use target_type = "ip" because pods get individual
+# IP addresses. The AWS Load Balancer Controller registers/deregisters
+# pod IPs automatically as pods start and stop.
 resource "aws_lb_target_group" "ui" {
   name        = "${var.environment}-ui-tg"
-  port        = 3000     # todo-ui React app listens on port 3000
+  port        = 3000          # React/nginx todo-ui listens on 3000
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "ip"     # register pod IPs (needed for EKS/Kubernetes)
+  target_type = "ip"          # register pod IPs directly (required for EKS)
 
   health_check {
     path                = "/health"
@@ -106,11 +100,28 @@ resource "aws_lb_target_group" "ui" {
   }
 }
 
-# ── HTTP Listener: Redirect to HTTPS ──────────────────────────────
-# All HTTP (port 80) traffic is redirected to HTTPS (port 443).
-# WHY? HTTP is unencrypted. You never want user data (passwords,
-# todo items) travelling unencrypted across the internet.
-resource "aws_lb_listener" "http" {
+# ── HTTP Listener (port 80) ────────────────────────────────────────
+# For dev (no SSL cert): HTTP on port 80 forwards directly to UI.
+# For prod (with SSL cert): this redirects to HTTPS instead.
+# count controls which behaviour applies based on whether a cert is set.
+
+# Dev mode: HTTP → forward to UI (no redirect, no cert needed)
+resource "aws_lb_listener" "http_dev" {
+  count             = var.acm_certificate_arn == "" ? 1 : 0
+  load_balancer_arn = aws_lb.alb.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  # Default: all traffic to the UI target group (todo-ui on EKS)
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ui.arn
+  }
+}
+
+# Prod mode: HTTP → redirect to HTTPS (only created when cert is set)
+resource "aws_lb_listener" "http_redirect" {
+  count             = var.acm_certificate_arn != "" ? 1 : 0
   load_balancer_arn = aws_lb.alb.arn
   port              = "80"
   protocol          = "HTTP"
@@ -120,44 +131,71 @@ resource "aws_lb_listener" "http" {
     redirect {
       port        = "443"
       protocol    = "HTTPS"
-      status_code = "HTTP_301" # 301 = permanent redirect
+      status_code = "HTTP_301"  # permanent redirect
     }
   }
 }
 
-# ── HTTPS Listener: Route traffic ─────────────────────────────────
-# All HTTPS (port 443) traffic goes through here.
-# Default action sends traffic to the UI (todo-ui on EKS).
-# Path-based rules send /api/* to todo-api on EC2.
+# ── HTTPS Listener (port 443) ──────────────────────────────────────
+# FIX: count = 0 when acm_certificate_arn is empty.
+# Without this fix, Terraform would try to create the listener with
+# an empty certificate_arn and AWS would reject it.
+# Only created when you set acm_certificate_arn in terraform.tfvars.
 resource "aws_lb_listener" "https" {
+  count             = var.acm_certificate_arn != "" ? 1 : 0
   load_balancer_arn = aws_lb.alb.arn
   port              = "443"
   protocol          = "HTTPS"
 
-  # Use a strong TLS policy — disables old insecure TLS versions
-  ssl_policy = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-
-  # Your SSL certificate — managed by AWS Certificate Manager (ACM).
-  # Get a free certificate from ACM for your domain.
+  # Strong TLS policy — disables TLS 1.0 and 1.1 (insecure old versions)
+  ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn = var.acm_certificate_arn
 
-  # Default: send to UI (todo-ui)
+  # Default: send to UI
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.ui.arn
   }
 }
 
-# ── Listener Rule: Route /api/* to EC2 backend ────────────────────
-# When the URL starts with /api, send to the API target group (EC2).
-# This rule has priority 1 — checked before the default rule.
-resource "aws_lb_listener_rule" "api_route" {
-  listener_arn = aws_lb_listener.https.arn
+# ── Routing Rule: /api/* → EC2 backend ────────────────────────────
+# When URL starts with /api/, the ALB sends the request to the
+# EC2 API target group instead of the EKS UI target group.
+# This rule applies to both the HTTP dev listener and HTTPS prod listener.
+#
+# Path pattern:
+#   /api/todos    → EC2 (API)
+#   /api/todos/1  → EC2 (API)
+#   /             → EKS (UI, default)
+#   /login        → EKS (UI, default)
+
+# API route for dev (HTTP)
+resource "aws_lb_listener_rule" "api_route_http" {
+  count        = var.acm_certificate_arn == "" ? 1 : 0
+  listener_arn = aws_lb_listener.http_dev[0].arn
   priority     = 1
 
   condition {
     path_pattern {
-      values = ["/api/*"] # matches any URL starting with /api/
+      values = ["/api/*"]
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+
+# API route for prod (HTTPS)
+resource "aws_lb_listener_rule" "api_route_https" {
+  count        = var.acm_certificate_arn != "" ? 1 : 0
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 1
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
     }
   }
 

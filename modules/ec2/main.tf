@@ -101,6 +101,7 @@ resource "aws_launch_template" "api" {
     environment      = var.environment
     aws_region       = "ap-south-1"
     secrets_arn      = var.secrets_arn
+    redis_secret_arn = var.redis_secret_arn
     docdb_endpoint   = var.docdb_endpoint
     redis_endpoint   = var.redis_endpoint
     msk_brokers      = var.msk_brokers
