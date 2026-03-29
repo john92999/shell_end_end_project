@@ -109,3 +109,6 @@ module "eks" {
   kms_key_arn          = module.security.kms_key_arn
   node_instance_type   = var.eks_node_instance_type
 }
+
+data "aws_caller_identity" "current" {}
+

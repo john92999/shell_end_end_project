@@ -96,15 +96,16 @@ resource "aws_launch_template" "api" {
   #   3. Fetches DB and Redis credentials from Secrets Manager
   #   4. Copies the JAR from S3 (or you can pull Docker image from ECR)
   #   5. Starts the Spring Boot API as a background service
-  user_data = base64encode(templatefile("${path.module}/userdata.sh", {
-    environment      = var.environment
-    aws_region       = "ap-south-1"
-    secrets_arn      = var.secrets_arn
-    redis_secret_arn = var.redis_secret_arn
-    docdb_endpoint   = var.docdb_endpoint
-    redis_endpoint   = var.redis_endpoint
-    msk_brokers      = var.msk_brokers
-  }))
+user_data = base64encode(templatefile("${path.module}/userdata.sh", {
+  environment      = var.environment
+  aws_region       = "ap-south-1"
+  secrets_arn      = var.secrets_arn
+  redis_secret_arn = var.redis_secret_arn
+  docdb_endpoint   = var.docdb_endpoint
+  redis_endpoint   = var.redis_endpoint
+  msk_brokers      = var.msk_brokers
+  artifact_bucket  = "todo-app-artifacts-dev-730335252201"   # <-- ADD THIS
+}))
 
   # Tag instances created from this template
   tag_specifications {
@@ -148,7 +149,7 @@ resource "aws_autoscaling_group" "api" {
   # EC2 status = "is the server on?" (not enough)
   # ELB health = "is the application responding on /actuator/health?" (better)
   health_check_type         = "ELB"
-  health_check_grace_period = 180  # wait 3 minutes for app to start before checking
+  health_check_grace_period = 300  # wait 3 minutes for app to start before checking
 
   # Instance Refresh: when launch template changes (new app version),
   # replace old instances one at a time without downtime.
